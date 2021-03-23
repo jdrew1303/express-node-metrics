@@ -1,18 +1,17 @@
 'use strict';
 var measured = require('measured');
-var stats = measured.createCollection();
 var gc = (require('gc-stats'))();
 var eventLoopStats = require("event-loop-stats");
-var memwatch = require('memwatch-next');
+var memwatch = require('node-memwatch');
 var schedule = require('node-schedule');
 var usage = require('pidusage');
 var metricsFactory = require('./factory');
 var trackedMetrics = {};
-var interval = 1000; // how often to refresh our measurement
 var cpuUsage;
 var gcLastRun;
 
-var customMetrics = {}
+var customMetrics = {};
+var customMetersMetrics = new Set();
 var endpointsLastResponseTime = {};
 
 var CATEGORIES = {
@@ -56,6 +55,12 @@ module.exports.addCustomGaugeMetric = function (metricName, metricValue) {
   }
 
   addMetric(metricName, "Gauge", gaugeFunction);
+}
+
+module.exports.addCustomMeterMetric = function (metricName) {
+  customMetersMetrics.add(metricName);
+  let meter = addMetric(metricName, "Meter");
+  meter.mark();
 }
 
 module.exports.getAll = function (reset) {
@@ -264,17 +269,26 @@ function resetAll() {
   resetMetric(NAMESPACES.internalMetrics);
   resetMetric(NAMESPACES.endpoints);
   resetCustomMetrics();
+  resetCustomMetersMetrics();
 
 }
 
 function resetCustomMetrics() {
   for (var customMetricName in customMetrics) {
     if (customMetrics.hasOwnProperty(customMetricName)) {
-      let customNamespace = customMetricName.substring(0, customMetricName.indexOf("."))
+      let customNamespace = customMetricName.substring(0, customMetricName.indexOf("."));
       resetMetric(customNamespace);
     }
   }
   customMetrics = {};
+}
+
+function resetCustomMetersMetrics() {
+  for (var customMetricName of customMetersMetrics) {
+    var metric = addMetric(customMetricName);
+    let customNamespace = customMetricName.substring(0, customMetricName.indexOf("."));
+    resetMetric(customNamespace);
+  }
 }
 
 function resetProcessMetrics() {
@@ -285,7 +299,22 @@ function resetProcessMetrics() {
 }
 
 function resetMetric(namespaceToReset) {
+  stopMeterMetrics(trackedMetrics[namespaceToReset]);
   delete trackedMetrics[namespaceToReset];
+}
+
+function stopMeterMetrics(metric) {
+  for (var subMetricsNames in metric) {
+    if (metric[subMetricsNames] instanceof measured.Meter) {
+      metric[subMetricsNames].end();
+    } else if (metric[subMetricsNames] instanceof measured.Timer) {
+      metric[subMetricsNames]._meter.end();
+    } else if ((metric[subMetricsNames] instanceof measured.Gauge) || (metric[subMetricsNames] instanceof measured.Counter)) {
+      //Do nothing
+    } else if (metric[subMetricsNames] instanceof Object) {
+      stopMeterMetrics(metric[subMetricsNames]);
+    }
+  }
 }
 
 addProcessMetrics();

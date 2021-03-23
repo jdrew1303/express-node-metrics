@@ -5,7 +5,7 @@ var clock = sinon.useFakeTimers();
 var should = require('chai').should();
 var rewire = require("rewire");
 var metricsModel = rewire("../src/metrics");
-
+var clearIntervalSpy;
 describe('metrics tests', function () {
     var result;
     after(function () {
@@ -13,6 +13,7 @@ describe('metrics tests', function () {
     });
     describe('getAll', function () {
         before(function () {
+            clearIntervalSpy = sinon.spy(global, 'clearInterval');
             metricsModel.logInternalMetric({
                 source: 'source',
                 methodName: 'methodName',
@@ -55,6 +56,9 @@ describe('metrics tests', function () {
             metricsModel.incrementCustomMetric("customNamespace1.customCategory1.metricToIncrement");
             metricsModel.incrementCustomMetric("customNamespace1.customCategory1.metricToIncrement");
             metricsModel.incrementCustomMetric("customNamespace1.customCategory1.metricToIncrement");
+
+            metricsModel.addCustomMeterMetric("customNamespace3.customCategory1.customMeter");
+            metricsModel.addCustomMeterMetric("customNamespace3.customCategory1.customMeter");
 
             metricsModel.__get__("memwatch").emit("leak", { test1: 1, test2: 2 });
         });
@@ -133,6 +137,8 @@ describe('metrics tests', function () {
 
             it('should have custom metrics', function () {
                 result.should.have.property("customNamespace1");
+                result.should.have.property("customNamespace2");
+                result.should.have.property("customNamespace3");
 
                 result.should.have.deep.property("customNamespace1.customCategory1.customMetricName1");
                 result.should.have.deep.property("customNamespace1.customCategory1.customMetricName2");
@@ -140,6 +146,7 @@ describe('metrics tests', function () {
                 result.should.have.deep.property("customNamespace2.customCategory1.customMetricName1");
                 result.should.have.deep.property("customNamespace1.customCategory1.metricToIncrement");
                 result.should.have.deep.property("customNamespace1.customCategory1.functionMetric");
+                result.should.have.deep.property("customNamespace3.customCategory1.customMeter");
 
                 result.customNamespace1.customCategory1.customMetricName1.should.equal(5);
                 result.customNamespace1.customCategory1.customMetricName2.should.equal(2);
@@ -147,12 +154,10 @@ describe('metrics tests', function () {
                 result.customNamespace2.customCategory1.customMetricName1.should.equal(4);
                 result.customNamespace1.customCategory1.metricToIncrement.should.equal(3);
                 result.customNamespace1.customCategory1.functionMetric.should.equal(process.geteuid());
-
+                result.customNamespace3.customCategory1.customMeter.count.should.equal(2);
             });
 
         });
-
-
         describe('decrement custom metrics', function () {
             before(function () {
                 metricsModel.decrementCustomMetric("customNamespace1.customCategory1.metricToIncrement");
@@ -164,6 +169,8 @@ describe('metrics tests', function () {
 
             it('should have custom metrics', function () {
                 result.should.have.property("customNamespace1");
+                result.should.have.property("customNamespace2");
+                result.should.have.property("customNamespace3");
 
                 result.should.have.deep.property("customNamespace1.customCategory1.customMetricName1");
                 result.should.have.deep.property("customNamespace1.customCategory1.customMetricName2");
@@ -176,10 +183,10 @@ describe('metrics tests', function () {
                 result.customNamespace1.customCategory2.customMetricName1.should.equal(3);
                 result.customNamespace2.customCategory1.customMetricName1.should.equal(4);
                 result.customNamespace1.customCategory1.metricToIncrement.should.equal(1);
+                result.customNamespace3.customCategory1.customMeter.count.should.equal(2);
 
             });
-        })
-
+        });
         describe('with reset', function () {
             var resultBeforeReset, resultAfterReset;
             before(function () {
@@ -247,18 +254,26 @@ describe('metrics tests', function () {
 
             it('should not have custom metrics', function () {
                 resultAfterReset.should.not.have.property("customNamespace1");
+                resultAfterReset.should.not.have.property("customNamespace2");
+                resultAfterReset.should.not.have.property("customNamespace3");
                 resultAfterReset.should.not.have.deep.property("customNamespace1.customCategory1.customMetricName1");
                 resultAfterReset.should.not.have.deep.property("customNamespace1.customCategory1.customMetricName2");
                 resultAfterReset.should.not.have.deep.property("customNamespace1.customCategory2.customMetricName1");
                 resultAfterReset.should.not.have.deep.property("customNamespace2.customCategory1.customMetricName1");
                 resultAfterReset.should.not.have.deep.property("customNamespace1.customCategory1.metricToIncrement");
-
+                resultAfterReset.should.not.have.deep.property("customNamespace3.customCategory1.customMeter");
+            });
+            it('should clean all Meter/Timer objects', function () {
+                should.equal(14, clearIntervalSpy.callCount); //minus 2 because when we reset process metrics we set a new ones
             });
         });
+        after(function () {
+            clearIntervalSpy.restore();
+        });
     });
-
     describe('get process metrics', function () {
         before(function () {
+            clearIntervalSpy = sinon.spy(global, 'clearInterval');
             metricsModel.logInternalMetric({
                 source: 'source',
                 methodName: 'methodName',
@@ -362,7 +377,6 @@ describe('metrics tests', function () {
                 resultBeforeReset = JSON.parse(resultBeforeReset);
                 resultAfterReset = JSON.parse(resultAfterReset);
             });
-
             it('should have process metrics', function () {
                 result.should.have.property('memory');
                 result.should.have.property('eventLoop');
@@ -411,18 +425,23 @@ describe('metrics tests', function () {
                 result.should.not.have.deep.property("apiMetrics.methods.GET");
                 result.should.not.have.deep.property("apiMetrics.endpoints./v1/applications/testApp|get");
             });
-
             it('should not have endpoint per statusCode metrics', function () {
                 result.should.not.have.property("endpoints");
                 result.should.not.have.deep.property("endpoints./v1/applications/testApp|get");
                 result.should.not.have.deep.property("endpoints./v1/applications/testApp|get.lastResponseTime");
                 result.should.not.have.deep.property("endpoints./v1/applications/testApp|get.200");
             });
+            it('should clear only processor Meter/Timer objects (2)', function () {
+                should.equal(2, clearIntervalSpy.callCount);
+            });
+        });
+        after(function () {
+            clearIntervalSpy.restore();
         });
     });
-
     describe('get internal metrics', function () {
         before(function () {
+            clearIntervalSpy = sinon.spy(global, 'clearInterval');
             metricsModel.logInternalMetric({
                 source: 'source',
                 methodName: 'methodName',
@@ -528,11 +547,17 @@ describe('metrics tests', function () {
             it('resultBeforeReset should not be empty', function () {
                 should.exist(resultBeforeReset);
             });
+            it('should clean all Meter/Timer objects', function () {
+                should.equal(6, clearIntervalSpy.callCount);
+            });
+        });
+        after(function () {
+            clearIntervalSpy.restore();
         });
     });
-
     describe('get api metrics', function () {
         before(function () {
+            clearIntervalSpy = sinon.spy(global, 'clearInterval');
             metricsModel.logInternalMetric({
                 source: 'source',
                 methodName: 'methodName',
@@ -628,14 +653,17 @@ describe('metrics tests', function () {
             it('resultBeforeReset should not be empty', function () {
                 should.exist(resultBeforeReset);
             });
+            it('should clean all Meter/Timer objects', function () {
+                should.equal(4, clearIntervalSpy.callCount);
+            })
+        });
+        after(function () {
+            clearIntervalSpy.restore();
         });
     });
-
-
-
-
     describe('get endpoints metrics', function () {
         before(function () {
+            clearIntervalSpy = sinon.spy(global, 'clearInterval');
             metricsModel.addApiData({
                 route: "/v1/applications/testApp",
                 method: "GET",
@@ -737,6 +765,12 @@ describe('metrics tests', function () {
             it('resultBeforeReset should not be empty', function () {
                 should.exist(resultBeforeReset);
             });
+            it('should clean all Meter/Timer objects', function () {
+                should.equal(3, clearIntervalSpy.callCount);
+            })
+        });
+        after(function () {
+            clearIntervalSpy.restore();
         });
     });
 });
